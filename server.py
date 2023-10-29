@@ -26,7 +26,10 @@ class Server:
         self.n_retries = retries
         self.address = ("127.0.0.1", port)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.clients = {}
         self.socket.bind(self.address)
+        self.socket.listen()
+
     
     #User authentication and lockout feature
         #User will send username and password
@@ -61,19 +64,29 @@ class Server:
     #Will ping server for that users UDP port
     async def send_file(self):
         pass
+    
+    async def handle_client(self, loop, client_socket, address): 
+        data = await loop.sock_recv(client, 1024)
+        #Handle client data
 
     async def run(self):
-        self.socket.listen()
-        self.socket.accept()
-
+        loop = asyncio.get_event_loop()
+        while True:
+            client, address = await loop.sock_accept(self.socket)
+            await asyncio.create_task(self.handle_client(loop, client, address))
+            
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Insufficient number of arguments, I require only a TCP port and number of failed attempts!")
-        exit(1)
+    #if len(sys.argv) != 3:
+    #    print("Insufficient number of arguments, I require only a TCP port and number of failed attempts!")
+    #    exit(1)
+
     tcp_port = int(sys.argv[1])
     attempts = int(sys.argv[2])
-    if 1 < attempts < 6
+    
+    #if attempts < 1 or attempts > 6:
+    #    print("Invalid amounts of attempts, please choose a number 0<x<6")
+    #    exit(1)
 
     #run the server
     server = Server(tcp_port, attempts)
