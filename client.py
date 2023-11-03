@@ -153,7 +153,7 @@ def tcp_listener(clientSocket: socket.socket, killed_flag: list):
             print(f"\n\n{time_sent}, {sender}: {message}\n\n{options}", flush=True, end="")
 
         else:
-            print(f"\n{receivedMessage.msg}\n", flush=True)
+            print(f"\n\n{receivedMessage.msg}\n", flush=True)
 
 def udp_listener():
     #payload, client_address = sock.recvfrom(1)

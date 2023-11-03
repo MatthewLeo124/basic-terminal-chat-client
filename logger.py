@@ -81,6 +81,7 @@ def run_logging(log_queue: queue.Queue):
                     log_msg = f'{task["sender"]} sent a message to {task["recipient"]} "{task["message"]}" at {task["time"]}'
                     file_log = f"{task['msg_number']}; {task['time']}; {task['sender']}; {task['message']}"
                     msg_log.write(file_log + '\n')
+                    msg_log.flush() #need to flush the buffer as its usually flushed once its closed.
                     stdoutLogger.info(log_msg)
 
             else:
