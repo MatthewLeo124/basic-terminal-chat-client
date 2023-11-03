@@ -182,8 +182,11 @@ class Server:
         for user in self.active_users.values():
             if user['username'] == envelope.msg:
                 continue
-            active = "active since " + datetime.datetime.fromtimestamp(user['login_time']).strftime('%d/%m/%Y %H:%M:%S') + '\n'
-            ret_val.msg += f"{user['username']}, {user['ip']}, {user['udp_port']}, {active}"
+            first = f"{user['username']}, {user['ip']}, {user['udp_port']}, "
+            ret_val.msg += first + "active since " + datetime.datetime.fromtimestamp(user['login_time']).strftime('%d/%m/%Y %H:%M:%S') + '\n'
+        if ret_val.msg == "":
+            ret_val.msg = "no other active users"
+        self.log_queue.put({'cmd': 'GEN', 'msg': f"{envelope.msg} requested active users. Return message: \n{ret_val.msg}"})
         return ret_val
 
     #Logout functions
@@ -216,8 +219,6 @@ class Server:
         ret_val.cmd = cmd
         ret_val.msg = message
         return ret_val
-
-
 
 if __name__ == "__main__":
     tcp_port = 15000#int(sys.argv[1])
