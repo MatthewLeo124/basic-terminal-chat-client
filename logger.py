@@ -26,10 +26,6 @@ Group chat:
 
 #datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 def run_logging(log_queue: queue.Queue):
-    msgLogger = logging.getLogger("msgLogger")
-    msgHandler = logging.FileHandler("messagelog.txt", "a+")
-    msgLogger.addHandler(msgHandler)
-
     stdoutLogger = logging.getLogger("stdoutLogger")
     #if not stdoutLogger.handlers:
         #stdoutHandler = logging.StreamHandler(sys.stdout)
@@ -41,50 +37,54 @@ def run_logging(log_queue: queue.Queue):
     cmd = None
     #{command:string, time:string, msg_num:int, msg:string}
     #{command:string, userdata: dict}
-    while True:
-        task = log_queue.get()
-        #Server is shutting down, signal thread shutdown
-        if task['cmd'] == "SHUTDOWN":
-            stdoutLogger.info("SHUTDOWN: Server shutdown flag received, logger shutting down")
-            break
+    with open("messagelog.txt", "a+") as msg_log:
+        while True:
+            task = log_queue.get()
+            #Server is shutting down, signal thread shutdown
+            if task['cmd'] == "SHUTDOWN":
+                stdoutLogger.info("SHUTDOWN: Server shutdown flag received, logger shutting down")
+                break
 
-        #General stdout message
-        #{command:string, msg:string}
-        elif task['cmd'] == "GEN":
-            stdoutLogger.info(f"GEN: {task['msg']}")
+            #General stdout message
+            #{command:string, msg:string}
+            elif task['cmd'] == "GEN":
+                stdoutLogger.info(f"GEN: {task['msg']}")
 
-        #User logs in
-        #{command:string, username:string, ip:string, udp_port:string, user_number: int}
-        elif task['cmd'] == "LOGIN":
-            curr_time = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-            message = f"{task['user_number']}; {curr_time}; {task['username']}; {task['ip']}; {task['udp']}"
-            write_userlog(task['cmd'], message)
-            stdoutLogger.info(f"LOGIN: {task['username']} has logged in from {task['ip']}:{task['udp']}")
+            #User logs in
+            #{command:string, username:string, ip:string, udp_port:string, user_number: int}
+            elif task['cmd'] == "LOGIN":
+                curr_time = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                message = f"{task['user_number']}; {curr_time}; {task['username']}; {task['ip']}; {task['udp']}"
+                write_userlog(task['cmd'], message)
+                stdoutLogger.info(f"LOGIN: {task['username']} has logged in from {task['ip']}:{task['udp']}")
 
-        #User logs out
-        #{command:string, username:string, msg:string}
-        elif task['cmd'] == "LOGOUT":
-            write_userlog(task['cmd'], task['username'])
-            stdoutLogger.info(f"LOGOUT: {task['username']} has logged out")
+            #User logs out
+            #{command:string, username:string, msg:string}
+            elif task['cmd'] == "LOGOUT":
+                write_userlog(task['cmd'], task['username'])
+                stdoutLogger.info(f"LOGOUT: {task['username']} has logged out")
 
-        #User sends a private message
-        #{command:string, time:string, msg_num:int, msg:string}
-        #User sends a group message
-        #{command:string, time:string, group:string, msg_num:int, msg:string}
-        elif task['cmd'] == "MSG":
-            log_msg = f"MESSAGE: TO BE IMPLEMENTED"
-            #group message
-            if task['group'] != "":
-                #Create files and loggers for respective group chats
-                stdoutLogger.info(log_msg)
-            
-            #private message
+            #User sends a private message
+            #{command:string, time:string, msg_num:int, msg:string}
+            #User sends a group message
+            #{command:string, time:string, group:string, msg_num:int, msg:string}
+            elif task['cmd'] == "MSG":
+                
+                #group message
+                if 'group' in task:
+                    #Create files and loggers for respective group chats
+                    log_msg = f"MESSAGE: TO BE IMPLEMENTED"
+                    stdoutLogger.info(log_msg)
+                
+                #private message
+                else:
+                    log_msg = f'{task["sender"]} sent a message to {task["recipient"]} "{task["message"]}" at {task["time"]}'
+                    file_log = f"{task['msg_number']}; {task['time']}; {task['sender']}; {task['message']}"
+                    msg_log.write(file_log + '\n')
+                    stdoutLogger.info(log_msg)
+
             else:
-                msgLogger.info(log_msg)
-                stdoutLogger.info(log_msg)
-
-        else:
-            stdoutLogger.error(f"Unknown log command {task['cmd']}")
+                stdoutLogger.error(f"Unknown log command {task['cmd']}")
 
     return
 

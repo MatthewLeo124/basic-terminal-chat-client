@@ -1,7 +1,8 @@
 #python3 client.py 127.0.0.1 15000 12000
 #Handle client data
 import threading
-from socket import *
+import socket
+import time
 import sys
 import smp
 
@@ -11,7 +12,7 @@ def run():
         print("\n===== Error usage: python3 client.py SERVER_IP SERVER_PORT CLIENT_UDP_PORT ======\n")
         exit(0)
 
-    clientSocket = socket(AF_INET, SOCK_STREAM)
+    clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     serverHost = sys.argv[1]
     serverPort = int(sys.argv[2])
     clientUDPPort = int(sys.argv[3])
@@ -41,6 +42,8 @@ def run():
             break
         elif outcome[0] == "INVALID":
             print(f"Invalid {outcome[1]}, please try again")
+            if outcome[1] == "USERNAME":
+                username = None
         elif outcome[0] == "TIMEOUT":
             print(outcome[1])
             exit(0)
@@ -50,7 +53,10 @@ def run():
     print("Successfully logged in")
 
     #Create listener thread
-    tcp_listener = threading.Thread(target=tcp_listener, args=(clientSocket, ))
+    clientSocket.settimeout(1)
+    tcp_listener_flag = [False]
+    tcp_listener_thread = threading.Thread(target=tcp_listener, args=(clientSocket, tcp_listener_flag, ))
+    tcp_listener_thread.start()
 
     #Setup UDP server
     #clientUDPSocket = socket(AF_INET, SOCK_DGRAM)
@@ -58,7 +64,7 @@ def run():
     #clientUDPSocket.bind(udpAddress)
     #udp_listener = threading.Thread(target=udp_listener, args=(clientUDPSocket, ))
 
-    input_message = """Enter one of the following commands: [/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /p2pvideo, /logout]: """
+    input_message = """Enter one of the following commands: [/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /p2pvideo, /logout]\n>"""
 
     while True:
         message = input(input_message)
@@ -73,56 +79,81 @@ def run():
             ""
         )
 
-        message = message.split()
+        message = message.split(" ", 1)
         cmd = message[0]
         if cmd == "/msgto":
-            print("This feature has not been implemented yet.")
+            command_envelope.cmd = "MSG"
+            recipient, sender_msg = message[1].split(" ", 1)
+            if sender_msg.isspace():
+                continue
+            command_envelope.msg = '\r\r'.join(["ONE", username, recipient, str(0), sender_msg]) #f"ONE\r\r{username}\r\r{recipient}\r\r0\r\r{sender_msg}" #from, to, msg
+
         elif cmd == "/activeuser":
             command_envelope.cmd = "USER"
             command_envelope.msg = username
+
         elif cmd == "/creategroup":
             print("This feature has not been implemented yet.")
+
         elif cmd == "/joingroup":
             print("This feature has not been implemented yet.")
+
         elif cmd == "/groupmsg":
             print("This feature has not been implemented yet.")
+
         elif cmd == "/p2pvideo":
             print("This feature has not been implemented yet.")
+
         elif cmd == "/logout":
             command_envelope.cmd = "OUT"
             command_envelope.msg = username
-            break
-        elif cmd == "/q":
-            break
+
         else:
-            print(f"Unknown command has been input.")
+            print("\nUnknown command has been input.\n")
             continue
 
         clientSocket.sendall(smp.encode_message(command_envelope))
 
+        if command_envelope.cmd == "OUT" or cmd == "/q":
+            break
+
+        time.sleep(0.01)
+
     # close the socket
-    tcp_listener.join()
+    tcp_listener_flag[0] = True
+    tcp_listener_thread.join()
     #udp_listener.join()
     clientSocket.close()
     print(f"See you later {username}!")
 
-
-def tcp_listener(clientSocket: socket, timeout=1):
+#killed_flag is bad coding, shouldn't use a mutable structure as a flag but should write as a class.
+def tcp_listener(clientSocket: socket.socket, killed_flag: list):
     while True:
+        if killed_flag[0]:
+            break
+
         # receive response from the server
         # 1024 is a suggested packet size, you can specify it as 2048 or others
-        clientSocket.settimeout(timeout)
-        receivedMessage = smp.decode_message(clientSocket.recv(1024))
+        receivedMessage = None
+        try:
+            data = clientSocket.recv(1024)
+            receivedMessage = smp.decode_message(data)
+        except socket.timeout:
+            continue
+        except OSError as e:
+            print(e, flush=True)
+            break
+
         if receivedMessage.cmd == "OUT":
             break
-        elif receivedMessage.cmd == "USER":
-            print(receivedMessage.msg)
+
         elif receivedMessage.cmd == "MSG":
-            pass
-        elif receivedMessage.cmd == "CGRP":
-            pass
-        elif receivedMessage.cmd == "JGRP":
-            pass
+            _, sender, _, time_sent, message = receivedMessage.msg.split('\r\r') #handle message
+            options = """Enter one of the following commands: [/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /p2pvideo, /logout]\n>"""
+            print(f"\n\n{time_sent}, {sender}: {message}\n\n{options}", flush=True, end="")
+
+        else:
+            print(f"\n{receivedMessage.msg}\n", flush=True)
 
 def udp_listener():
     #payload, client_address = sock.recvfrom(1)

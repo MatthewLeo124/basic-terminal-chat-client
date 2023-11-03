@@ -60,7 +60,7 @@ class Server:
                     ret_val = self.show_active_users(envelope)
 
                 elif envelope.cmd == "MSG":
-                    ret_val = self.create_envelope_from_server(envelope.sender_ip, envelope.sender_port, "ERR", "This feature has not been implemented yet!")
+                    ret_val = await self.send_message(envelope)
 
                 elif envelope.cmd == "CGRP":
                     ret_val = self.create_envelope_from_server(envelope.sender_ip, envelope.sender_port, "ERR", "This feature has not been implemented yet!")
@@ -197,6 +197,25 @@ class Server:
         })
         del self.active_users[envelope.msg]
         return self.create_envelope_from_server(envelope.sender_ip, envelope.sender_port, envelope.cmd, "SUCCESS")
+
+    async def send_message(self, envelope: smp.SMP): #return value is the successful sending of the message
+        #command_envelope.msg = f"ONE/many\r\r{username}\r\r{recipient}\r\r0\r\r{sender_msg}" #from, to, msg
+        #1-1 messaging
+        cmd, sender, recipient, _, msg = envelope.msg.split('\r\r', 4)
+        if cmd == "ONE": #individual messaging
+            if recipient not in self.active_users:
+                return self.create_envelope_from_server(envelope.sender_ip, envelope.sender_port, "MSGR", f"User: '{recipient}' is not active! Message not sent")
+            time_sent = datetime.datetime.fromtimestamp(math.floor(time.time())).strftime('%d/%m/%Y %H:%M:%S')
+            msg_to_send = '\r\r'.join([cmd, sender, recipient, time_sent, msg])
+            to_send = smp.SMP(envelope.sender_ip, envelope.sender_port, self.active_users[recipient]['ip'], self.active_users[recipient]['udp_port'], envelope.cmd, msg_to_send)
+            loop = asyncio.get_event_loop()
+            await loop.sock_sendall(self.active_users[recipient]['socket'], smp.encode_message(to_send))
+        else: #Group message
+            pass
+        #from, to, message, time
+        self.log_queue.put({'cmd': 'MSG', 'sender': sender, 'recipient': recipient, 'time': time_sent, 'message': msg, 'msg_number': self.msg_number})
+        self.msg_number += 1
+        return self.create_envelope_from_server(envelope.sender_ip, envelope.sender_port, "MSGR", f"message sent at {time_sent}")
 
     #Helper functions
     def load_credentials(self):
