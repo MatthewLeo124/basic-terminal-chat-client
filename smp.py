@@ -10,6 +10,8 @@ CMD\r\n
 BODY
 
 MSG\r\n\r\n
+
+user should have a token to identify them from the serverside
 """
 
 """

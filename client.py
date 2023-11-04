@@ -93,13 +93,28 @@ def run():
             command_envelope.msg = username
 
         elif cmd == "/creategroup":
-            print("This feature has not been implemented yet.")
+            if len(message) == 1:
+                print("ERR: Please specify the group chat name and the users you wish to put in there.")
+            data = message[1].split()
+            if len(data) == 1:
+                print("ERR: Please specify both the group chat name and the users you wish to put into the group chat.")
+            command_envelope.cmd = "CGRP"
+            command_envelope.msg = '\r\r'.join(message[1].split())
 
         elif cmd == "/joingroup":
-            print("This feature has not been implemented yet.")
+            if len(message) == 1:
+                print("ERR: Please specify the group chat name that you wish to join")
+            command_envelope.cmd = "JGRP"
+            command_envelope.msg = f'{username}\r\r{message[1].strip()}'
 
         elif cmd == "/groupmsg":
-            print("This feature has not been implemented yet.")
+            if len(message) == 1:
+                print("ERR: Please specify the group chat name and your message.")
+            data = message[1].split(" ", 1)
+            if len(data) == 1:
+                print("ERR: Please specify both the group chat name and the message you wish to send.")
+            command_envelope.cmd = "MSG"
+            command_envelope.msg = f"MANY\r\r{data[0]}\r\r{data[1]}"
 
         elif cmd == "/p2pvideo":
             print("This feature has not been implemented yet.")

@@ -189,6 +189,17 @@ class Server:
         self.log_queue.put({'cmd': 'GEN', 'msg': f"{envelope.msg} requested active users. Return message: \n{ret_val.msg}"})
         return ret_val
 
+    #TODO
+    def create_group_chat(self, envelope: smp.SMP):
+        pass    
+    
+    #users are the users in the group chat
+    async def broadcast_message(self, users: list[str], message: smp.SMP):
+        loop = asyncio.get_event_loop()
+        for user in users:
+            await loop.sock_sendall(self.active_user[user]['socket'], smp.encode_message(message))
+        return
+
     #Logout functions
     def logout(self, envelope: smp.SMP):
         self.log_queue.put({
@@ -197,12 +208,14 @@ class Server:
         })
         del self.active_users[envelope.msg]
         return self.create_envelope_from_server(envelope.sender_ip, envelope.sender_port, envelope.cmd, "SUCCESS")
+    
 
     async def send_message(self, envelope: smp.SMP): #return value is the successful sending of the message
         #command_envelope.msg = f"ONE/many\r\r{username}\r\r{recipient}\r\r0\r\r{sender_msg}" #from, to, msg
         #1-1 messaging
-        cmd, sender, recipient, _, msg = envelope.msg.split('\r\r', 4)
+        cmd, data = envelope.msg.split('\r\r', 1)
         if cmd == "ONE": #individual messaging
+            sender, recipient, _, msg = data.split('\r\r', 3)
             if recipient not in self.active_users:
                 return self.create_envelope_from_server(envelope.sender_ip, envelope.sender_port, "MSGR", f"User: '{recipient}' is not active! Message not sent")
             time_sent = datetime.datetime.fromtimestamp(math.floor(time.time())).strftime('%d/%m/%Y %H:%M:%S')
@@ -211,7 +224,15 @@ class Server:
             loop = asyncio.get_event_loop()
             await loop.sock_sendall(self.active_users[recipient]['socket'], smp.encode_message(to_send))
         else: #Group message
-            pass
+            group_chat_name, msg = data.split('\r\r')
+            if group_chat_name not in self.group_chats:
+                return self.create_envelope_from_server(envelope.sender_ip, envelope.sender_port, "MSGR", f"Group chat: '{group_chat_name}' does not exist! Message not sent")
+            #Check if user is a part of the groupchat
+            
+            time_sent = datetime.datetime.fromtimestamp(math.floor(time.time())).strftime('%d/%m/%Y %H:%M:%S')
+            msg_to_send = '\r\r'.join([cmd, sender, recipient, time_sent, msg])
+
+            
         #from, to, message, time
         self.log_queue.put({'cmd': 'MSG', 'sender': sender, 'recipient': recipient, 'time': time_sent, 'message': msg, 'msg_number': self.msg_number})
         self.msg_number += 1
