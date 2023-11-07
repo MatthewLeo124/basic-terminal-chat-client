@@ -276,7 +276,7 @@ def tcp_listener(clientSocket: socket.socket, killed_flag: list, tcp_queue: list
         
         elif receivedMessage.cmd == "MGRP":
             sender, group_chat, time_sent, message = receivedMessage.msg.split('\r\r') #handle message
-            print(f"\n{time_sent}, {sender} -> {group_chat}: {message}\n", flush=True, end="")
+            print(f"\n{time_sent}, {group_chat}, {sender}: {message}\n", flush=True, end="")
 
         elif receivedMessage.cmd == "VID":
             data = receivedMessage.msg.split('\r\r')
