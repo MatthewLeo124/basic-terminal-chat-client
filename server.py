@@ -3,6 +3,7 @@
 #Standard Libs
 import threading
 import datetime
+import logging
 import asyncio
 import socket
 import queue
@@ -13,24 +14,125 @@ import uuid
 import sys
 import os
 
-#My libs
-import logger
-import smp
-
-"""
-    CMD's available
-    auth -> AUTH
-    active user -> USER
-    msg to -> MSG
-    create group -> CGRP
-    join group -> JGRP
-    group msg -> MSG
-    logout -> OUT
-    error -> ERR
-"""
+logging.basicConfig(format='[%(asctime)s] %(levelname)s: %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
 
 SERVER_IP = "127.0.0.1"
 
+#Simple message protocol
+class SMP:
+    def __init__(self, token: str = "", cmd: str | None = None, msg: str | None = None):
+        self.token = token
+        self.cmd = cmd
+        self.msg = msg
+
+def encode_message(message: SMP) -> bytes:
+    encoded = '\r\n'.join((message.token,  message.cmd, message.msg))
+    return (encoded + '\r\n\r\n').encode()
+
+def decode_message(encoded: bytes) -> SMP:
+    if encoded == b'':
+        return -1
+    modified = encoded.decode().rstrip('\r\n').split('\r\n')
+    if len(modified) == 2:
+        return SMP(modified[0], modified[1])
+    else:
+        return SMP(modified[0], modified[1], modified[2])
+
+#Logging
+def run_logging(log_queue: queue.Queue):
+    stdoutLogger = logging.getLogger("stdoutLogger")
+    stdoutLogger.setLevel(logging.INFO) #Set handler on the logger not the handler to properly set the output
+
+    #{command:string, time:string, msg_num:int, msg:string}
+    #{command:string, userdata: dict}
+    while True:
+        task = log_queue.get()
+        #Server is shutting down, signal thread shutdown
+        if task['cmd'] == "SHUTDOWN":
+            stdoutLogger.info("Server shutdown flag received, logger shutting down")
+            break
+
+        #General stdout message
+        #{command:string, msg:string}
+        elif task['cmd'] == "GEN":
+            stdoutLogger.info(task['msg'])
+        
+        elif task['cmd'] == "ERR":
+            stdoutLogger.error(task['msg'])
+
+        #User logs in
+        #{command:string, username:string, ip:string, udp_port:string, user_number: int}
+        elif task['cmd'] == "LOGIN":
+            curr_time = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+            message = f"{task['user_number']}; {curr_time}; {task['username']}; {task['ip']}; {task['udp']}"
+            write_userlog(task['cmd'], message)
+            stdoutLogger.info(f"{task['username']} has logged in from {task['ip']}:{task['udp']}")
+
+        #User logs out
+        #{command:string, username:string, msg:string}
+        elif task['cmd'] == "LOGOUT":
+            write_userlog(task['cmd'], task['username'])
+            stdoutLogger.info(f"{task['username']} has logged out")
+
+        #User sends a private message
+        #{command:string, time:string, msg_num:int, msg:string}
+        #User sends a group message
+        #{command:string, time:string, group:string, msg_num:int, msg:string}
+        elif task['cmd'] == "MSG":
+            log_msg = f'{task["sender"]} sent a message to {task["recipient"]} at {task["time"]}: {task["message"]}'
+            file_log = f"{task['msg_number']}; {task['time']}; {task['sender']}; {task['message']}"
+            with open("messagelog.txt", "a+") as f:
+                f.write(file_log + '\n')
+                f.flush() #need to flush the buffer as its usually flushed once its closed.
+            stdoutLogger.info(log_msg)
+
+        elif task['cmd'] == "CGRP":
+            #Create the log for the group chat
+            open(f"{task['group_name']}_messageLog.txt", "w").close()
+            stdoutLogger.info(task['msg'])
+
+        elif task['cmd'] == "MGRP":
+            log_msg = f"{task['sender']} sent a message to {task['group_name']} at {task['time']}: {task['message']}"
+            file_log = f"{task['msg_number']}; {task['time']}; {task['sender']}; {task['message']}"
+            with open(f"{task['group_name']}_messageLog.txt", "a+") as f:
+                f.write(file_log + '\n')
+                f.flush()
+            stdoutLogger.info(log_msg)
+
+        else:
+            stdoutLogger.error(f"Unknown log command {task['cmd']}")
+    return
+
+def write_userlog(cmd: str, target: str):
+    if cmd == "LOGIN":
+        with open("userlog.txt", "a+") as f:
+            f.write(target + '\n')
+
+    else: #cmd == "LOGOUT"
+        #Build list of current users
+        current_users = []
+        with open("userlog.txt", "a+") as f:
+            f.seek(0)
+            for line in f:
+                user = line.strip().split('; ')
+                current_users.append(user)
+
+            #wipe file
+            f.seek(0)
+            f.truncate(0)
+
+            #write to file
+            seen = False
+            for user in current_users:
+                if user[2] == target:
+                    seen = True
+                    continue
+                if seen:
+                    user[0] = str(int(user[0]) - 1)
+                f.write("; ".join(user) + '\n')
+    return
+
+#Chat client server
 class Server:
     def __init__(self, port: int, retries: int):
         self.n_retries = retries
@@ -50,7 +152,7 @@ class Server:
 
         while True:
             try:
-                envelope = smp.decode_message((await loop.sock_recv(client_socket, 1024)))
+                envelope = decode_message((await loop.sock_recv(client_socket, 1024)))
                 if envelope == -1:
                     self.log_queue.put({'cmd': "GEN", 'msg': f"client: {client_address} has suddenly closed connection"})
                     client_socket.close()
@@ -76,17 +178,17 @@ class Server:
 
                 elif envelope.cmd == "OUT":
                     ret_val = self.logout(envelope)
-                    await loop.sock_sendall(client_socket, smp.encode_message(ret_val))
+                    await loop.sock_sendall(client_socket, encode_message(ret_val))
                     client_socket.close()
                     break
 
                 elif envelope.cmd == "VID":
-                    pass
+                    ret_val = self.get_user_port(envelope)
 
                 else: #ERR
-                    ret_val = smp.SMP(envelope.token, "ERR", "INVALID COMMAND")
+                    ret_val = SMP(envelope.token, "ERR", "INVALID COMMAND")
     
-                await loop.sock_sendall(client_socket, smp.encode_message(ret_val))
+                await loop.sock_sendall(client_socket, encode_message(ret_val))
             except Exception as e:
                 client_socket.close()
                 raise e
@@ -100,7 +202,7 @@ class Server:
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         self.log_queue = queue.Queue(maxsize=0)
-        self.log_thread = threading.Thread(target=logger.run_logging, args=(self.log_queue, ))
+        self.log_thread = threading.Thread(target=run_logging, args=(self.log_queue, ))
         self.log_thread.start()
 
         #Wipe the files
@@ -127,7 +229,7 @@ class Server:
                 break
         return
 
-    async def authentication(self, envelope: smp.SMP, client_socket: socket.socket, client_address: tuple):
+    async def authentication(self, envelope: SMP, client_socket: socket.socket, client_address: tuple):
         username, password = envelope.msg.split('\n')
 
         #Case: User is already logged in
@@ -167,12 +269,12 @@ class Server:
 
             return envelope
 
-        ret_val = smp.SMP("", "AUTH", "UDP")
+        ret_val = SMP("", "AUTH", "UDP")
 
         #Get UDP port
         loop = asyncio.get_event_loop()
-        await loop.sock_sendall(client_socket, smp.encode_message(ret_val))
-        udp_port = smp.decode_message((await loop.sock_recv(client_socket, 1024)))
+        await loop.sock_sendall(client_socket, encode_message(ret_val))
+        udp_port = decode_message((await loop.sock_recv(client_socket, 1024)))
         udp_port = str(udp_port.msg)
 
         #Send Token to user
@@ -219,8 +321,8 @@ class Server:
             })
         return
 
-    def show_active_users(self, envelope: smp.SMP):
-        ret_val = smp.SMP(envelope.token, envelope.cmd, "")
+    def show_active_users(self, envelope: SMP):
+        ret_val = SMP(envelope.token, envelope.cmd, "")
         for user in self.active_users.values():
             if user['username'] == self.token_to_username[envelope.token]:
                 continue
@@ -231,7 +333,7 @@ class Server:
         self.log_queue.put({'cmd': 'GEN', 'msg': f"{self.token_to_username[envelope.token]} requested active users. Returning: \n{ret_val.msg}"})
         return ret_val
 
-    def create_group_chat(self, envelope: smp.SMP):
+    def create_group_chat(self, envelope: SMP):
         if not envelope.msg:
             envelope.cmd = "ERR"
             envelope.msg = f"Insufficient arguments provided, please provide the group name and users to add"
@@ -320,9 +422,9 @@ class Server:
                 'group_name': group_name,
                 'msg': f"Created group chat: [{group_name}] successfully for {self.token_to_username[envelope.token]}. Users in the room: {members}"
         })
-        return smp.SMP(envelope.token, envelope.cmd, f"Group chat created: {group_name}")
+        return SMP(envelope.token, envelope.cmd, f"Group chat created: {group_name}")
 
-    def join_group_chat(self, envelope: smp.SMP):
+    def join_group_chat(self, envelope: SMP):
         if not envelope.msg:
             envelope.cmd = "ERR"
             envelope.msg = f"Insufficient arguments provided, please provide the group name you wish to join"
@@ -370,9 +472,9 @@ class Server:
             'cmd': 'GEN',
             'msg': f"Successfully joined {user} to groupchat {group_name}. Current users are: {self.group_chats[group_name]['joined']}"
         })
-        return smp.SMP(envelope.token, envelope.cmd, f"Successfully joined group chat {group_name}")
+        return SMP(envelope.token, envelope.cmd, f"Successfully joined group chat {group_name}")
 
-    def logout(self, envelope: smp.SMP):
+    def logout(self, envelope: SMP):
         username = self.token_to_username[envelope.token]
         self.log_queue.put({
             'cmd': 'LOGOUT',
@@ -383,9 +485,9 @@ class Server:
         for group_chat in self.active_users[username]['groups']:
             self.group_chats[group_chat]['joined'].remove(username)
 
-        return smp.SMP(envelope.token, envelope.cmd, "SUCCESS")
+        return SMP(envelope.token, envelope.cmd, "SUCCESS")
 
-    async def send_message(self, envelope: smp.SMP):
+    async def send_message(self, envelope: SMP):
         if not envelope.msg:
             envelope.cmd = "ERR"
             envelope.msg = f"Insufficient arguments provided, please provide the user to send to and a message"
@@ -429,7 +531,7 @@ class Server:
             msg_to_send = '\r\r'.join([sender, time_sent, msg])
 
             loop = asyncio.get_event_loop()
-            await loop.sock_sendall(self.active_users[recipient]['socket'], smp.encode_message(smp.SMP("", envelope.cmd, msg_to_send)))
+            await loop.sock_sendall(self.active_users[recipient]['socket'], encode_message(SMP("", envelope.cmd, msg_to_send)))
             self.log_queue.put({
                 'cmd': 'MSG',
                 'sender': sender,
@@ -439,6 +541,7 @@ class Server:
                 'msg_number': self.msg_number
             })
             self.msg_number += 1
+            return SMP(envelope.token, "MSGR", f"Message sent at {time_sent}")
         
         #Individual to group chat
         else:
@@ -489,7 +592,7 @@ class Server:
 
             time_sent = datetime.datetime.fromtimestamp(math.floor(time.time())).strftime('%d/%m/%Y %H:%M:%S')
             msg_to_send = '\r\r'.join([sender, group_chat, time_sent, msg])
-            msg_envelope = smp.SMP("", envelope.cmd, msg_to_send)
+            msg_envelope = SMP("", envelope.cmd, msg_to_send)
 
             await self.broadcast_message(joined, msg_envelope)
 
@@ -502,14 +605,45 @@ class Server:
                 'msg_number': self.group_chats[group_chat]['msg_number']
             })
             self.group_chats[group_chat]['msg_number'] += 1
+            return SMP(envelope.token, "MSGR", f"Group chat message sent at {time_sent}")
 
-        return smp.SMP(envelope.token, "MSGR", f"Group chat message sent at {time_sent}")
-
-    async def broadcast_message(self, users: list[str], message: smp.SMP):
+    async def broadcast_message(self, users: list[str], message: SMP):
         loop = asyncio.get_event_loop()
         for user in users:
-            await loop.sock_sendall(self.active_users[user]['socket'], smp.encode_message(message))
+            await loop.sock_sendall(self.active_users[user]['socket'], encode_message(message))
         return
+
+    def get_user_port(self, envelope):
+        #Case: There is no user specified
+        if not envelope.msg:
+            envelope.msg = f"ERR\r\rPlease provide a user to send the file to"
+            self.log_queue.put({
+                'cmd': 'ERR',
+                'msg': f"Failed to provide user information to User {self.token_to_username[envelope.token]}: Insufficient arguments provided"
+            })
+            return envelope
+
+        user = envelope.msg
+
+        #Case: Requested user does not exist
+        if user not in self.active_users:
+            envelope.msg = f"ERR\r\rUser does not exist, cannot send user info of non-existent user"
+            self.log_queue.put({
+                'cmd': 'ERR',
+                'msg': f"Failed to provide user information to User {self.token_to_username[envelope.token]}: Requested user {user} does not exist"
+            })
+            return envelope
+
+        #Case: Requested user is not active
+        if not self.active_users[user]['active']:
+            envelope.msg = f"ERR\r\rUser is not online, cannot send connection data of offline user"
+            self.log_queue.put({
+                'cmd': 'ERR',
+                'msg': f"Failed to provide user information to User {self.token_to_username[envelope.token]}: Requested user {user} is offline"
+            })
+            return envelope
+
+        return SMP("", envelope.cmd, f"{self.active_users[user]['ip']}\r\r{self.active_users[user]['udp_port']}")
 
     def load_credentials(self):
         with open("credentials.txt", "r") as f:
@@ -523,8 +657,11 @@ class Server:
         return
 
 if __name__ == "__main__":
-    tcp_port = 15000#int(sys.argv[1])
-    attempts = 2#int(sys.argv[2])
+    if len(sys.argv) != 3:
+        print("\n===== Error usage: python3 server.py SERVER_PORT #_ATTEMPTS ======\n")
+        exit(0)
+    tcp_port = int(sys.argv[1])
+    attempts = int(sys.argv[2])
     #run the server
     server = Server(tcp_port, attempts)
     asyncio.run(server.run())
