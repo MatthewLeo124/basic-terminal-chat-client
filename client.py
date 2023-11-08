@@ -4,6 +4,7 @@ import threading
 import socket
 import time
 import sys
+import os
 
 #Simple message protocol
 class SMP:
@@ -27,20 +28,20 @@ def decode_message(encoded: bytes) -> SMP:
         return SMP(modified[0], modified[1], modified[2])
 
 def run():
-    #if len(sys.argv) != 4:
-    #    print("\n===== Error usage: python3 client.py SERVER_IP SERVER_PORT CLIENT_UDP_PORT ======\n")
-    #    exit(0)
+    if len(sys.argv) != 4:
+        print("\n===== Error usage: python3 client.py SERVER_IP SERVER_PORT CLIENT_UDP_PORT ======\n")
+        exit(0)
+
+    serverHost = sys.argv[1]
+    serverPort = int(sys.argv[2])
+    clientUDPPort = int(sys.argv[3])
+    serverAddress = (serverHost, serverPort)
 
     clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     clientSocket.settimeout(1)
 
     clientUDPSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     clientUDPSocket.settimeout(1)
-
-    serverHost = "127.0.0.1"#sys.argv[1]
-    serverPort = int(input("Server port: "))#15000#int(sys.argv[2])
-    clientUDPPort = int(input("UDP Port: "))#12001#int(sys.argv[3])
-    serverAddress = (serverHost, serverPort)
 
     udpAddress = ('127.0.0.1', clientUDPPort)
     clientUDPSocket.bind(udpAddress)
@@ -111,21 +112,20 @@ def run():
             clientSocket.sendall(encode_message(command_envelope))
 
             #Timeout after 1 second
-            #timeout = 0
-            #while not len(tcp_queue) and timeout < 1000:
-            #    time.sleep(0.001)
-            #    timeout += 1
+            timeout = 0
+            while not len(tcp_queue) and timeout < 1000:
+                time.sleep(0.001)
+                timeout += 1
             #We timed out, 
-            #if timeout >= 1000:
-            #    print("Timed out receiving userdata from server")
-            #    continue
-            time.sleep(0.01)
+            if timeout >= 1000:
+                print("Timed out receiving userdata from server")
+                continue
             user_data = tcp_queue.pop()
             if user_data == -1:
                 continue
             
             if len(data) != 2:
-                print("Not enough arguments provided! Cannot perform action")
+                print("\nNot enough arguments provided! Cannot perform action\n")
                 continue
             
             #Send the video to the other person
@@ -133,6 +133,11 @@ def run():
             filename = data[1].split()[0]
             error = 0
             chunk = 0
+
+            #Check if the file exists, print error if not
+            if not os.path.isfile(filename):
+                print("\nCannot send file: File does not exist! Please provide a valid file to send\n")
+                continue
 
             #Handshake
             handshake = error.to_bytes(1, 'big') + chunk.to_bytes(4, 'big') + f"{username}\r\r{filename}".encode()
@@ -161,7 +166,6 @@ def run():
 
             chunk += 1 #Increment chunk to 2 as the server has accepted the connection
             timeout = 0
-            
             with open(filename, "r+b") as f:
                 try:
                     while data := f.read(1019):
@@ -280,10 +284,11 @@ def tcp_listener(clientSocket: socket.socket, killed_flag: list, tcp_queue: list
 
         elif receivedMessage.cmd == "VID":
             data = receivedMessage.msg.split('\r\r')
-            data = (data[0], int(data[1]))
             if data[0] == "ERR":
                 print(f"\n{data[1]}\n", flush=True)
                 data = -1
+            else:
+                data = (data[0], int(data[1]))
             tcp_queue.append(data)
 
         else:

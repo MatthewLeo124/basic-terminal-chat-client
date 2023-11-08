@@ -343,25 +343,8 @@ class Server:
             })
             return envelope
         data = envelope.msg.split('\r\r', 1)
-        if len(data) == 1:
-            envelope.cmd = "ERR"
-            envelope.msg = f"Insufficient arguments provided, please provide the users to add"
-            self.log_queue.put({
-                'cmd': 'ERR',
-                'msg': f"Failed to create group chat for {self.token_to_username[envelope.token]}: Insufficient arguments provided"
-            })
-            return envelope
-        group_name, users = data
-
-        #Case: group chat name is not alphanumeric
-        if not group_name.isalnum():
-            envelope.cmd = "ERR"
-            envelope.msg = f"Failed to create group chat: group chat name: '{group_name}' is not valid, please use only [a-z A-Z 0-9]"
-            self.log_queue.put({
-                'cmd': 'ERR',
-                'msg': f"Failed to create group chat [{group_name}] for {self.token_to_username[envelope.token]}: Group chat name is not alphanumeric"
-            })
-            return envelope
+        group_name = data[:1][0]
+        users = data[1:]
 
         #Case: group chat already exists
         if group_name in self.group_chats:
@@ -372,8 +355,27 @@ class Server:
                 'msg': f"Failed to create group chat [{group_name}] for {self.token_to_username[envelope.token]}: Chat already exists"
             })
             return envelope
+        
+        #Case: group chat name is not alphanumeric
+        if not group_name.isalnum():
+            envelope.cmd = "ERR"
+            envelope.msg = f"Failed to create group chat: group chat name: '{group_name}' is not valid, please use only [a-z A-Z 0-9]"
+            self.log_queue.put({
+                'cmd': 'ERR',
+                'msg': f"Failed to create group chat [{group_name}] for {self.token_to_username[envelope.token]}: Group chat name is not alphanumeric"
+            })
+            return envelope
 
-        users = users.split('\r\r')
+        if not len(users):
+            envelope.cmd = "ERR"
+            envelope.msg = f"Insufficient arguments provided, please provide the users to add"
+            self.log_queue.put({
+                'cmd': 'ERR',
+                'msg': f"Failed to create group chat for {self.token_to_username[envelope.token]}: Insufficient arguments provided"
+            })
+            return envelope
+
+        users = users[0].split('\r\r')
         members = []
         for user in users:
             #Case: Can't add someone who isn't active
@@ -508,10 +510,6 @@ class Server:
             return envelope
 
         sender = self.active_users[self.token_to_username[envelope.token]]['username']
-        self.log_queue.put({
-            'cmd': 'GEN',
-            'msg': f"{self.token_to_username[envelope.token]} is trying to send a message"
-        })
         
         #Invididual to individual
         if envelope.cmd == "MSG":
@@ -524,6 +522,16 @@ class Server:
                 self.log_queue.put({
                     'cmd': 'ERR',
                     'msg': f"Failed to send message for {self.token_to_username[envelope.token]} to {recipient}: User is not in active_users"
+                })
+                return envelope
+            
+            #Case: User is self:
+            if recipient == self.token_to_username[envelope.token]:
+                envelope.cmd = "ERR"
+                envelope.msg = f"Can't send messages to self. Message not sent"
+                self.log_queue.put({
+                    'cmd': 'ERR',
+                    'msg': f"Failed to send message for {self.token_to_username[envelope.token]} to {recipient}: User trying to message self"
                 })
                 return envelope
 
@@ -580,16 +588,6 @@ class Server:
             joined = [*self.group_chats[group_chat]['joined']] #copy list since mutables are passed by reference and not copied
             joined.remove(self.token_to_username[envelope.token])
 
-            #Case: If no one else has joined the group chat other than the sender
-            if not len(joined):
-                envelope.cmd = "ERR"
-                envelope.msg = f"No one else has joined the group chat, failed to broadcast message"
-                self.log_queue.put({
-                    'cmd': 'ERR',
-                    'msg': f"Failed to send message for {self.token_to_username[envelope.token]} to [{group_chat}]: No one else has joined the group chat other than the sender"
-                })
-                return envelope
-
             time_sent = datetime.datetime.fromtimestamp(math.floor(time.time())).strftime('%d/%m/%Y %H:%M:%S')
             msg_to_send = '\r\r'.join([sender, group_chat, time_sent, msg])
             msg_envelope = SMP("", envelope.cmd, msg_to_send)
@@ -616,7 +614,7 @@ class Server:
     def get_user_port(self, envelope):
         #Case: There is no user specified
         if not envelope.msg:
-            envelope.msg = f"ERR\r\rPlease provide a user to send the file to"
+            envelope.msg = f"ERR\r\rPlease provide a user to get port data of"
             self.log_queue.put({
                 'cmd': 'ERR',
                 'msg': f"Failed to provide user information to User {self.token_to_username[envelope.token]}: Insufficient arguments provided"
@@ -627,7 +625,7 @@ class Server:
 
         #Case: Requested user does not exist
         if user not in self.active_users:
-            envelope.msg = f"ERR\r\rUser does not exist, cannot send user info of non-existent user"
+            envelope.msg = f"ERR\r\rUser does not exist, cannot send user port data of non-existent user"
             self.log_queue.put({
                 'cmd': 'ERR',
                 'msg': f"Failed to provide user information to User {self.token_to_username[envelope.token]}: Requested user {user} does not exist"
@@ -640,6 +638,15 @@ class Server:
             self.log_queue.put({
                 'cmd': 'ERR',
                 'msg': f"Failed to provide user information to User {self.token_to_username[envelope.token]}: Requested user {user} is offline"
+            })
+            return envelope
+        
+        #Case: Requested user is self
+        if user == self.token_to_username[envelope.token]:
+            envelope.msg = f"ERR\r\rInvalid input: Requested User is self"
+            self.log_queue.put({
+                'cmd': 'ERR',
+                'msg': f"Failed to provide user information to User {self.token_to_username[envelope.token]}: Requested user is self"
             })
             return envelope
 
@@ -662,6 +669,5 @@ if __name__ == "__main__":
         exit(0)
     tcp_port = int(sys.argv[1])
     attempts = int(sys.argv[2])
-    #run the server
     server = Server(tcp_port, attempts)
     asyncio.run(server.run())
