@@ -8,7 +8,7 @@ import os
 
 #Simple message protocol
 class SMP:
-    def __init__(self, token: str = "", cmd: str | None = None, msg: str | None = None):
+    def __init__(self, token: str = "", cmd: str = None, msg: str = None):
         self.token = token
         self.cmd = cmd
         self.msg = msg

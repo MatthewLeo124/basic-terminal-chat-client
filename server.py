@@ -20,7 +20,7 @@ SERVER_IP = "127.0.0.1"
 
 #Simple message protocol
 class SMP:
-    def __init__(self, token: str = "", cmd: str | None = None, msg: str | None = None):
+    def __init__(self, token: str = "", cmd: str = None, msg: str = None):
         self.token = token
         self.cmd = cmd
         self.msg = msg
@@ -326,6 +326,8 @@ class Server:
         for user in self.active_users.values():
             if user['username'] == self.token_to_username[envelope.token]:
                 continue
+            if not user['active']:
+                continue
             first = f"{user['username']}, {user['ip']}, {user['udp_port']}, "
             ret_val.msg += first + "active since " + datetime.datetime.fromtimestamp(user['login_time']).strftime('%d/%m/%Y %H:%M:%S') + '\n'
         if ret_val.msg == "":
@@ -485,7 +487,8 @@ class Server:
         self.active_users[username]['active'] = False
         del self.token_to_username[envelope.token]
         for group_chat in self.active_users[username]['groups']:
-            self.group_chats[group_chat]['joined'].remove(username)
+            if username in self.group_chats[group_chat]['joined']:
+                self.group_chats[group_chat]['joined'].remove(username)
 
         return SMP(envelope.token, envelope.cmd, "SUCCESS")
 
