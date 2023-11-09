@@ -16,7 +16,7 @@ import os
 
 logging.basicConfig(format='[%(asctime)s] %(levelname)s: %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
 
-SERVER_IP = "127.0.0.1"
+SERVER_IP = "127.0.0.1" #Since we are using localhost, don't need to use gethostname() function as this is more performant (don't need to do any DNS lookups or what not)
 
 #Simple message protocol
 class SMP:
@@ -25,10 +25,17 @@ class SMP:
         self.cmd = cmd
         self.msg = msg
 
+#Encode messages to bytes to be sent to server 
+#@param: message; SMP created by server
+#return: return encoded message to send to client
 def encode_message(message: SMP) -> bytes:
     encoded = '\r\n'.join((message.token,  message.cmd, message.msg))
     return (encoded + '\r\n\r\n').encode()
 
+#Need to code error handling in case the client sends a bad packet
+#Decode bytes to SMP which can be read by server
+#@param: encoded; bytes received from TCP connection
+#return: decode bytes received from client to SMP
 def decode_message(encoded: bytes) -> SMP:
     if encoded == b'':
         return -1
@@ -86,11 +93,13 @@ def run_logging(log_queue: queue.Queue):
                 f.flush() #need to flush the buffer as its usually flushed once its closed.
             stdoutLogger.info(log_msg)
 
+        #User wants to create group
         elif task['cmd'] == "CGRP":
             #Create the log for the group chat
             open(f"{task['group_name']}_messageLog.txt", "w").close()
             stdoutLogger.info(task['msg'])
 
+        #User messages group chat
         elif task['cmd'] == "MGRP":
             log_msg = f"{task['sender']} sent a message to {task['group_name']} at {task['time']}: {task['message']}"
             file_log = f"{task['msg_number']}; {task['time']}; {task['sender']}; {task['message']}"
@@ -132,7 +141,7 @@ def write_userlog(cmd: str, target: str):
                 f.write("; ".join(user) + '\n')
     return
 
-#Chat client server
+#Chat server
 class Server:
     def __init__(self, port: int, retries: int):
         self.n_retries = retries
@@ -195,12 +204,14 @@ class Server:
         return
 
     async def run(self):
+        #Listen to TCP socket
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.bind(self.address)
         self.socket.listen(8)
         self.socket.setblocking(False)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
+        #Start logging thread
         self.log_queue = queue.Queue(maxsize=0)
         self.log_thread = threading.Thread(target=run_logging, args=(self.log_queue, ))
         self.log_thread.start()
@@ -216,10 +227,10 @@ class Server:
         self.load_credentials()
         loop = asyncio.get_event_loop()
 
-        while True:
+        while True: #Listen for clients and create new async page for each client
             try:
                 client, address = await loop.sock_accept(self.socket)
-                client.setblocking(False)
+                client.setblocking(False) #Returned socket from sock_accept will be blocking, so set false
                 loop.create_task(self.handle_client(client, address))
             except Exception as e:
                 print(e)
@@ -321,7 +332,7 @@ class Server:
             })
         return
 
-    def show_active_users(self, envelope: SMP):
+    def show_active_users(self, envelope: SMP): #Return active users to client
         ret_val = SMP(envelope.token, envelope.cmd, "")
         for user in self.active_users.values():
             if user['username'] == self.token_to_username[envelope.token]:
@@ -608,13 +619,13 @@ class Server:
             self.group_chats[group_chat]['msg_number'] += 1
             return SMP(envelope.token, "MSGR", f"Group chat message sent at {time_sent}")
 
-    async def broadcast_message(self, users: list[str], message: SMP):
+    async def broadcast_message(self, users: list[str], message: SMP): #Broadcast message to group chat
         loop = asyncio.get_event_loop()
         for user in users:
             await loop.sock_sendall(self.active_users[user]['socket'], encode_message(message))
         return
 
-    def get_user_port(self, envelope):
+    def get_user_port(self, envelope: SMP): #Get user UDP port for client
         #Case: There is no user specified
         if not envelope.msg:
             envelope.msg = f"ERR\r\rPlease provide a user to get port data of"
@@ -655,7 +666,7 @@ class Server:
 
         return SMP("", envelope.cmd, f"{self.active_users[user]['ip']}\r\r{self.active_users[user]['udp_port']}")
 
-    def load_credentials(self):
+    def load_credentials(self): #Load credentials into memory from file
         with open("credentials.txt", "r") as f:
             for line in f:
                 username, password = line.rstrip().split()

@@ -1,3 +1,4 @@
+#written in python 3.11.5 (works with 3.9)
 #python3 client.py 127.0.0.1 15000 12000
 #Handle client data
 import threading
@@ -13,11 +14,17 @@ class SMP:
         self.cmd = cmd
         self.msg = msg
 
+#Encode messages to bytes to be sent to server 
+#@param: message; SMP created by client
+#return: return encoded message to send to server
 def encode_message(message: SMP) -> bytes:
     encoded = '\r\n'.join((message.token,  message.cmd, message.msg))
     return (encoded + '\r\n\r\n').encode()
 
 #Need to code error handling in case the client sends a bad packet
+#Decode bytes to SMP which can be read by client
+#@param: encoded; bytes received from TCP connection
+#return: decode bytes received from server to SMP
 def decode_message(encoded: bytes) -> SMP:
     if encoded == b'':
         return -1
@@ -27,6 +34,7 @@ def decode_message(encoded: bytes) -> SMP:
     else:
         return SMP(modified[0], modified[1], modified[2])
 
+#Main execution thread that listens to user input and sends to server
 def run():
     if len(sys.argv) != 4:
         print("\n===== Error usage: python3 client.py SERVER_IP SERVER_PORT CLIENT_UDP_PORT ======\n")
@@ -63,6 +71,7 @@ def run():
     udp_listener_thread.start()
 
     input_message = """Enter one of the following commands: [/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /p2pvideo, /logout]\n>"""
+    #Handle user input and create the cprres
     while True:
         message = input(input_message)
         if len(message) == 0:
@@ -101,7 +110,6 @@ def run():
             if data:
                 command_envelope.msg = '\r\r'.join(data.split(" ", 1))
 
-        #TODO: May have to have this idling in a background thread
         #/p2pvideo <person> <filename>
         elif cmd == "/p2pvideo":
             command_envelope.cmd = "VID"
@@ -129,7 +137,6 @@ def run():
                 continue
             
             #Send the video to the other person
-            #1 = error, 0 = finished
             filename = data[1].split()[0]
             error = 0
             chunk = 0
@@ -145,7 +152,7 @@ def run():
 
             #Wait for ACK
             timeout = 0
-            while not len(udp_queue) and timeout < 10000: #Timeout after 1 second
+            while not len(udp_queue) and timeout < 10000: #Timeout after 10 seconds
                 time.sleep(0.001)
                 timeout += 1
             if timeout >= 10000:
@@ -168,10 +175,10 @@ def run():
             timeout = 0
             with open(filename, "r+b") as f:
                 try:
-                    while data := f.read(1019):
+                    while data := f.read(1019): #align UDP packet to 10 byte boundary (2^10)
                         data = error.to_bytes(1, 'big') + chunk.to_bytes(4, 'big') + data
-                        clientUDPSocket.sendto(data, user_data)
-                        while not len(udp_queue) and timeout < 10000:
+                        clientUDPSocket.sendto(data, user_data) #Send chunk to audience
+                        while not len(udp_queue) and timeout < 10000: #Wait for ACK or 10 seconds
                             time.sleep(0.001)
                             timeout += 1
                         if timeout >= 10000:
@@ -182,10 +189,10 @@ def run():
                         if err:
                             print("An error has occured from the receiver, failed to send file to target")
                             continue
-                        chunk += 1
+                        chunk += 1 #Received ACK, increment chunk by 1
                     error = 0
                     data = error.to_bytes(1, 'big') + chunk.to_bytes(4, 'big')
-                    clientUDPSocket.sendto(data, user_data)
+                    clientUDPSocket.sendto(data, user_data) #Send final ACK to client (no data) to indicate end of transmission
                     print(f"\n{filename} has been uploaded successfully\n")
                 except Exception as e:
                     print(e)
@@ -194,9 +201,11 @@ def run():
                     clientUDPSocket.sendto(data, user_data)
             continue
 
+        #/logout
         elif cmd == "/logout":
             command_envelope.cmd = "OUT"
 
+        #Used when we detect the TCP connection to the server has been lost to clean up gracefully
         elif cmd == "/q":
             break
 
@@ -209,7 +218,7 @@ def run():
         if cmd == "/logout":
             break
 
-        time.sleep(0.01)
+        time.sleep(0.01) #Sleep to 
 
     #close the socket
     kill_flag[0] = True
@@ -219,6 +228,10 @@ def run():
     clientUDPSocket.close()
     print(f"See you later {username}!")
 
+#Authenticate client with the server
+#@param: clientSocket: socket.socket; The TCP socket connected to the server
+#@param: clientUDPPort: int; The port the client is going to listen on for file transfers
+#return: username:string, token:string; username used to log in and unique user token
 def client_authentication(clientSocket, clientUDPPort):
     username = None
     while True:
@@ -253,6 +266,9 @@ def client_authentication(clientSocket, clientUDPPort):
     return (username, token)
 
 #killed_flag is bad coding, shouldn't use a mutable structure as a flag but should write as a class.
+#@param: clientSocket: socket.socket; The TCP socket connected to the server
+#@param: killed_flag: list; contains a boolean which the thread will check to see if the client is closing and close as well
+#@param: tcp_queue: list; main thread grabs data from server via this queue
 def tcp_listener(clientSocket: socket.socket, killed_flag: list, tcp_queue: list):
     while True:
         if killed_flag[0]:
@@ -294,6 +310,9 @@ def tcp_listener(clientSocket: socket.socket, killed_flag: list, tcp_queue: list
         else:
             print(f"\n{receivedMessage.msg}\n", flush=True)
 
+#@param: sock: socket.socket; The UDP socket the client is listening on
+#@param: killed_flag: list; contains a boolean which the thread will check to see if the client is closing and close as well
+#@param: udp_queue: list; main thread consumes from this list waiting for audience to reply with ACK which this function publishes to queue
 def udp_listener(sock: socket.socket, kill_flag: list, udp_queue: list):
     while True:
         if kill_flag[0]:

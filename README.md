@@ -13,4 +13,3 @@ What it can't do
 - Many many things
 - Can't delete group chats
 - All 'databases' are files
-- 
